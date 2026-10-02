@@ -125,6 +125,7 @@ pub struct ObscuraState {
     /// navigations set it to the source document URL.
     pub referrer: String,
     pub blocked_urls: Vec<String>,
+    pub storage_dir: Option<std::path::PathBuf>,
     pub cookie_jar: Option<Arc<CookieJar>>,
     pub http_client: Option<Arc<ObscuraHttpClient>>,
     /// The owning page's passive on_request/on_response callbacks (issue
@@ -385,6 +386,7 @@ impl ObscuraState {
             title: String::new(),
             referrer: String::new(),
             blocked_urls: Vec::new(),
+            storage_dir: None,
             cookie_jar: None,
             http_client: None,
             callbacks: None,
@@ -5271,6 +5273,58 @@ fn op_set_cookie(scope: &mut v8::PinScope, state: &OpState, #[string] cookie_str
     jar.set_cookie_from_js(cookie_str, &url);
 }
 
+fn sanitize_origin_for_storage(origin: &str) -> String {
+    let sanitized: String = origin
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .collect();
+    let trimmed = sanitized.trim_matches('_');
+    if trimmed.is_empty() {
+        "default.json".to_string()
+    } else {
+        format!("{}.json", trimmed)
+    }
+}
+
+#[op2]
+#[string]
+fn op_localstorage_load(scope: &mut v8::PinScope, state: &OpState) -> String {
+    let gs = realm_state(scope, state);
+    let gs = gs.borrow();
+    let storage_dir = match &gs.storage_dir {
+        Some(d) => d,
+        None => return String::new(),
+    };
+    let origin = match url::Url::parse(&gs.url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => return String::new(),
+    };
+    let file_name = sanitize_origin_for_storage(&origin);
+    let path = storage_dir.join("localStorage").join(file_name);
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+#[op2(fast)]
+fn op_localstorage_save(scope: &mut v8::PinScope, state: &OpState, #[string] data_json: &str) {
+    let gs = realm_state(scope, state);
+    let gs = gs.borrow();
+    let storage_dir = match &gs.storage_dir {
+        Some(d) => d,
+        None => return,
+    };
+    let origin = match url::Url::parse(&gs.url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => return,
+    };
+    let ls_dir = storage_dir.join("localStorage");
+    if std::fs::create_dir_all(&ls_dir).is_err() {
+        return;
+    }
+    let file_name = sanitize_origin_for_storage(&origin);
+    let path = ls_dir.join(file_name);
+    let _ = std::fs::write(path, data_json);
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SessionHistory {
     pub urls: Vec<String>,
@@ -6469,6 +6523,8 @@ pub fn build_extension() -> Extension {
         op_fetch_body(),
         op_get_cookies(),
         op_set_cookie(),
+        op_localstorage_load(),
+        op_localstorage_save(),
         op_navigate(),
         op_session_history(),
         op_history_traverse(),

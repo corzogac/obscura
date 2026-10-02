@@ -1247,6 +1247,10 @@ impl ObscuraJsRuntime {
         }
     }
 
+    pub fn set_storage_dir(&self, storage_dir: Option<std::path::PathBuf>) {
+        self.state.borrow_mut().storage_dir = storage_dir;
+    }
+
     /// Set the document's character encoding (WHATWG canonical name). Backs
     /// `document.characterSet` and the `<a>`/`<area>` URL query encoding
     /// override for legacy-charset documents.
@@ -22419,5 +22423,38 @@ mod tests {
             serde_json::json!("true,true,1,true,1,true,0,0,true"),
             "label association must follow the HTML labelable-element rules"
         );
+    }
+
+    #[test]
+    fn test_localstorage_disk_persistence() {
+        let temp_dir = std::env::temp_dir().join(format!("obscura_test_ls_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Instance 1: write items to localStorage
+        {
+            let mut rt = setup_runtime("<html><body></body></html>");
+            rt.set_url("https://example.com/login");
+            rt.set_storage_dir(Some(temp_dir.clone()));
+            rt.execute_script("<test>", "localStorage.setItem('auth_token', 'secret123'); localStorage.setItem('user', 'gerald');").unwrap();
+            let token = rt.evaluate("localStorage.getItem('auth_token')").unwrap();
+            assert_eq!(token, serde_json::json!("secret123"));
+        }
+
+        // Verify disk file exists
+        let ls_file = temp_dir.join("localStorage").join("https___example.com.json");
+        assert!(ls_file.exists(), "localStorage json file must exist on disk");
+
+        // Instance 2: new runtime with same storage_dir should load the saved items
+        {
+            let mut rt = setup_runtime("<html><body></body></html>");
+            rt.set_url("https://example.com/dashboard");
+            rt.set_storage_dir(Some(temp_dir.clone()));
+            let token = rt.evaluate("localStorage.getItem('auth_token')").unwrap();
+            assert_eq!(token, serde_json::json!("secret123"));
+            let user = rt.evaluate("localStorage.getItem('user')").unwrap();
+            assert_eq!(user, serde_json::json!("gerald"));
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
