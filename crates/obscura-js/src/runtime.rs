@@ -24590,7 +24590,7 @@ mod tests {
             let mut rt = setup_runtime("<html><body></body></html>");
             rt.set_url("https://example.com/login");
             rt.set_storage_dir(Some(temp_dir.clone()));
-            rt.execute_script("<test>", "localStorage.setItem('auth_token', 'secret123'); localStorage.setItem('user', 'gerald');").unwrap();
+            rt.execute_script("<test>", "localStorage.setItem('auth_token', 'secret123'); localStorage.setItem('user', 'alice');").unwrap();
             let token = rt.evaluate("localStorage.getItem('auth_token')").unwrap();
             assert_eq!(token, serde_json::json!("secret123"));
         }
@@ -24607,7 +24607,7 @@ mod tests {
             let token = rt.evaluate("localStorage.getItem('auth_token')").unwrap();
             assert_eq!(token, serde_json::json!("secret123"));
             let user = rt.evaluate("localStorage.getItem('user')").unwrap();
-            assert_eq!(user, serde_json::json!("gerald"));
+            assert_eq!(user, serde_json::json!("alice"));
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
