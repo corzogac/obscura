@@ -14444,23 +14444,105 @@ function _idbRequest(produceResult) {
   return req;
 }
 
-function _idbObjectStore(name) {
+function _idbObjectStore(name, dbName) {
   const data = new Map();
+  const ops = typeof __obscuraCore !== 'undefined' ? __obscuraCore.ops : null;
+  const hasOps = !!(ops && typeof ops.op_idb_get === 'function');
+  const db = String(dbName || 'default');
+  const store = String(name);
+
   return {
     name,
     keyPath: null,
     autoIncrement: false,
     indexNames: { contains() { return false; }, length: 0, item() { return null; } },
     transaction: null,
-    add(value, key) { const k = key ?? Date.now(); data.set(k, value); return _idbRequest(() => k); },
-    put(value, key) { const k = key ?? Date.now(); data.set(k, value); return _idbRequest(() => k); },
-    get(key) { return _idbRequest(() => data.get(key) ?? undefined); },
-    getAll() { return _idbRequest(() => Array.from(data.values())); },
-    getAllKeys() { return _idbRequest(() => Array.from(data.keys())); },
-    getKey(key) { return _idbRequest(() => (data.has(key) ? key : undefined)); },
-    delete(key) { return _idbRequest(() => { data.delete(key); return undefined; }); },
-    clear() { return _idbRequest(() => { data.clear(); return undefined; }); },
-    count() { return _idbRequest(() => data.size); },
+    add(value, key) {
+      const k = key ?? Date.now();
+      if (hasOps) {
+        try { ops.op_idb_put(db, store, String(k), JSON.stringify(value)); } catch (_) {}
+      }
+      data.set(k, value);
+      return _idbRequest(() => k);
+    },
+    put(value, key) {
+      const k = key ?? Date.now();
+      if (hasOps) {
+        try { ops.op_idb_put(db, store, String(k), JSON.stringify(value)); } catch (_) {}
+      }
+      data.set(k, value);
+      return _idbRequest(() => k);
+    },
+    get(key) {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try {
+            const raw = ops.op_idb_get(db, store, String(key));
+            if (raw !== null && raw !== undefined && raw !== "") return JSON.parse(raw);
+          } catch (_) {}
+        }
+        return data.get(key) ?? undefined;
+      });
+    },
+    getAll() {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try {
+            const raws = ops.op_idb_get_all(db, store);
+            if (raws && raws.length > 0) return raws.map(r => JSON.parse(r));
+          } catch (_) {}
+        }
+        return Array.from(data.values());
+      });
+    },
+    getAllKeys() {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try {
+            const keys = ops.op_idb_get_all_keys(db, store);
+            if (keys && keys.length > 0) return keys;
+          } catch (_) {}
+        }
+        return Array.from(data.keys());
+      });
+    },
+    getKey(key) {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try {
+            const raw = ops.op_idb_get(db, store, String(key));
+            if (raw !== null && raw !== undefined && raw !== "") return key;
+          } catch (_) {}
+        }
+        return data.has(key) ? key : undefined;
+      });
+    },
+    delete(key) {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try { ops.op_idb_delete(db, store, String(key)); } catch (_) {}
+        }
+        data.delete(key);
+        return undefined;
+      });
+    },
+    clear() {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try { ops.op_idb_clear(db, store); } catch (_) {}
+        }
+        data.clear();
+        return undefined;
+      });
+    },
+    count() {
+      return _idbRequest(() => {
+        if (hasOps) {
+          try { return ops.op_idb_count(db, store); } catch (_) {}
+        }
+        return data.size;
+      });
+    },
     openCursor() { return _idbRequest(() => null); },
     openKeyCursor() { return _idbRequest(() => null); },
     createIndex() { return { name: '', keyPath: '', unique: false, multiEntry: false, get() { return _idbRequest(() => undefined); } }; },
@@ -14469,10 +14551,10 @@ function _idbObjectStore(name) {
   };
 }
 
-function _idbTransaction(storeNames) {
+function _idbTransaction(storeNames, dbName) {
   const stores = new Map();
   const names = Array.isArray(storeNames) ? storeNames : [storeNames];
-  for (const n of names) stores.set(String(n), _idbObjectStore(String(n)));
+  for (const n of names) stores.set(String(n), _idbObjectStore(String(n), dbName));
   const tx = {
     db: null,
     mode: 'readonly',
@@ -14481,7 +14563,7 @@ function _idbTransaction(storeNames) {
     error: null,
     objectStore(name) {
       let s = stores.get(name);
-      if (!s) { s = _idbObjectStore(name); stores.set(name, s); }
+      if (!s) { s = _idbObjectStore(name, dbName); stores.set(name, s); }
       s.transaction = tx;
       return s;
     },
@@ -14503,10 +14585,10 @@ function _idbDatabase(name, version) {
     name,
     version,
     objectStoreNames: { contains() { return false; }, length: 0, item() { return null; } },
-    createObjectStore(n) { return _idbObjectStore(n); },
+    createObjectStore(n) { return _idbObjectStore(n, name); },
     deleteObjectStore() {},
     transaction(storeNames, mode) {
-      const tx = _idbTransaction(storeNames);
+      const tx = _idbTransaction(storeNames, name);
       tx.mode = mode || 'readonly';
       return tx;
     },
