@@ -15440,8 +15440,101 @@ globalThis.IDBKeyRange = {
   bound(l, u, lo, uo) { return { lower: l, upper: u, lowerOpen: !!lo, upperOpen: !!uo, includes(x) { return (lo ? x > l : x >= l) && (uo ? x < u : x <= u); } }; },
 };
 
-// Do not advertise CacheStorage until it can retain responses. A successful
-// no-op cache selects broken persistence paths instead of normal fetch fallbacks.
+class Cache {
+  constructor(name) {
+    this._name = String(name);
+    this._mem = new Map();
+  }
+  async put(request, response) {
+    const url = typeof request === 'string' ? request : (request && request.url ? request.url : String(request));
+    if (!response) throw new TypeError("Response is required");
+    const clone = typeof response.clone === 'function' ? response.clone() : response;
+    const text = await clone.text();
+    const headers = [];
+    if (response.headers && typeof response.headers.forEach === 'function') {
+      response.headers.forEach((v, k) => headers.push([k, v]));
+    }
+    const payload = JSON.stringify({
+      status: response.status || 200,
+      statusText: response.statusText || 'OK',
+      headers,
+      body: text,
+    });
+    this._mem.set(url, payload);
+    if (typeof __obscuraCore !== 'undefined' && __obscuraCore.ops && typeof __obscuraCore.ops.op_cache_put === 'function') {
+      try { __obscuraCore.ops.op_cache_put(this._name, url, payload); } catch (_) {}
+    }
+  }
+  async match(request) {
+    const url = typeof request === 'string' ? request : (request && request.url ? request.url : String(request));
+    let raw = null;
+    if (typeof __obscuraCore !== 'undefined' && __obscuraCore.ops && typeof __obscuraCore.ops.op_cache_get === 'function') {
+      try { raw = __obscuraCore.ops.op_cache_get(this._name, url); } catch (_) {}
+    }
+    if (!raw) {
+      raw = this._mem.get(url);
+    }
+    if (!raw) return undefined;
+    try {
+      const data = JSON.parse(raw);
+      return new Response(data.body, { status: data.status, statusText: data.statusText, headers: data.headers });
+    } catch (_) {
+      return undefined;
+    }
+  }
+  async delete(request) {
+    const url = typeof request === 'string' ? request : (request && request.url ? request.url : String(request));
+    this._mem.delete(url);
+    if (typeof __obscuraCore !== 'undefined' && __obscuraCore.ops && typeof __obscuraCore.ops.op_cache_delete === 'function') {
+      try { return __obscuraCore.ops.op_cache_delete(this._name, url); } catch (_) {}
+    }
+    return true;
+  }
+  async keys() {
+    if (typeof __obscuraCore !== 'undefined' && __obscuraCore.ops && typeof __obscuraCore.ops.op_cache_keys === 'function') {
+      try {
+        const list = __obscuraCore.ops.op_cache_keys(this._name);
+        if (list && list.length) return list.map(u => new Request(u));
+      } catch (_) {}
+    }
+    return Array.from(this._mem.keys()).map(u => new Request(u));
+  }
+}
+
+class CacheStorage {
+  constructor() {
+    this._caches = new Map();
+  }
+  async open(name) {
+    name = String(name);
+    let c = this._caches.get(name);
+    if (!c) {
+      c = new Cache(name);
+      this._caches.set(name, c);
+    }
+    return c;
+  }
+  async has(name) {
+    return this._caches.has(String(name));
+  }
+  async delete(name) {
+    return this._caches.delete(String(name));
+  }
+  async keys() {
+    return Array.from(this._caches.keys());
+  }
+  async match(request) {
+    for (const c of this._caches.values()) {
+      const m = await c.match(request);
+      if (m) return m;
+    }
+    return undefined;
+  }
+}
+
+globalThis.Cache = Cache;
+globalThis.CacheStorage = CacheStorage;
+globalThis.caches = new CacheStorage();
 
 _markNative(AudioContext); _markNative(OfflineAudioContext);
 _markNative(SpeechSynthesisUtterance);
