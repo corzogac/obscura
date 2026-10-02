@@ -24612,4 +24612,47 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_indexeddb_redb_disk_persistence() {
+        let temp_dir = std::env::temp_dir().join(format!("obscura_test_idb_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Instance 1: write items into indexedDB
+        {
+            let mut rt = setup_runtime("<html><body></body></html>");
+            rt.set_url("https://app.example.com/");
+            rt.set_storage_dir(Some(temp_dir.clone()));
+            rt.execute_script("<test>", r#"
+                const req = indexedDB.open('my_auth_db', 1);
+                const db = req.result;
+                const store = db.createObjectStore('sessions');
+                store.put({ token: 'jwt-xyz-987', userId: 42 }, 'current_session');
+            "#).unwrap();
+        }
+
+        // Verify the .redb file was created on disk
+        let db_file = temp_dir.join("indexeddb").join("https___app.example.com").join("my_auth_db.redb");
+        assert!(db_file.exists(), "IndexedDB redb file must exist on disk at {:?}", db_file);
+
+        // Instance 2: new runtime with same storage_dir reads back the object
+        {
+            let mut rt = setup_runtime("<html><body></body></html>");
+            rt.set_url("https://app.example.com/");
+            rt.set_storage_dir(Some(temp_dir.clone()));
+            let result = rt.evaluate(r#"
+                (() => {
+                    const req = indexedDB.open('my_auth_db', 1);
+                    const db = req.result;
+                    const tx = db.transaction(['sessions'], 'readonly');
+                    const store = tx.objectStore('sessions');
+                    const getReq = store.get('current_session');
+                    return getReq.result;
+                })()
+            "#).unwrap();
+            assert_eq!(result, serde_json::json!({ "token": "jwt-xyz-987", "userId": 42 }));
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
