@@ -22500,4 +22500,46 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_cache_storage_disk_persistence() {
+        let temp_dir = std::env::temp_dir().join(format!("obscura_test_cache_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Instance 1: write to caches
+        {
+            let mut rt = setup_runtime("<html><body></body></html>");
+            rt.set_url("https://api.example.com/app");
+            rt.set_storage_dir(Some(temp_dir.clone()));
+            let _ = rt.evaluate_for_cdp_with_timeout(r#"
+                (async () => {
+                    const cache = await caches.open('v1');
+                    await cache.put('https://api.example.com/user', new Response('{"id":123,"role":"admin"}', {
+                        headers: { 'content-type': 'application/json' }
+                    }));
+                })()
+            "#, true, true, 1000).await.unwrap();
+        }
+
+        // Verify .redb file exists on disk
+        let cache_file = temp_dir.join("cache_storage").join("https___api.example.com").join("caches.redb");
+        assert!(cache_file.exists(), "CacheStorage redb file must exist on disk at {:?}", cache_file);
+
+        // Instance 2: read back from fresh runtime
+        {
+            let mut rt = setup_runtime("<html><body></body></html>");
+            rt.set_url("https://api.example.com/app");
+            rt.set_storage_dir(Some(temp_dir.clone()));
+            let result = rt.evaluate_for_cdp_with_timeout(r#"
+                (async () => {
+                    const cache = await caches.open('v1');
+                    const res = await cache.match('https://api.example.com/user');
+                    return res ? await res.text() : null;
+                })()
+            "#, true, true, 1000).await.unwrap();
+            assert_eq!(result.value, Some(serde_json::json!("{\"id\":123,\"role\":\"admin\"}")));
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

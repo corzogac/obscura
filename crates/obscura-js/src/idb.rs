@@ -137,3 +137,68 @@ pub fn idb_count(db_path: &Path, store: &str) -> usize {
         0
     }
 }
+
+const CACHE_RECORDS: TableDefinition<&str, &str> = TableDefinition::new("cache_records");
+
+pub fn get_cache_db_path(storage_dir: &Path, origin: &str) -> PathBuf {
+    let origin_clean = sanitize_for_path(origin);
+    let dir = storage_dir.join("cache_storage").join(origin_clean);
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("caches.redb")
+}
+
+pub fn cache_get(db_path: &Path, cache_name: &str, url: &str) -> Option<String> {
+    let db = Database::open(db_path).ok()?;
+    let read_txn = db.begin_read().ok()?;
+    let table = read_txn.open_table(CACHE_RECORDS).ok()?;
+    let comp_key = make_composite_key(cache_name, url);
+    let val = table.get(comp_key.as_str()).ok()??;
+    Some(val.value().to_string())
+}
+
+pub fn cache_put(db_path: &Path, cache_name: &str, url: &str, val_json: &str) -> Result<(), String> {
+    let db = Database::create(db_path).or_else(|_| Database::open(db_path)).map_err(|e| e.to_string())?;
+    let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+    {
+        let mut table = write_txn.open_table(CACHE_RECORDS).map_err(|e| e.to_string())?;
+        let comp_key = make_composite_key(cache_name, url);
+        table.insert(comp_key.as_str(), val_json).map_err(|e| e.to_string())?;
+    }
+    write_txn.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn cache_delete(db_path: &Path, cache_name: &str, url: &str) -> Result<bool, String> {
+    if !db_path.exists() {
+        return Ok(false);
+    }
+    let db = Database::open(db_path).map_err(|e| e.to_string())?;
+    let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+    let removed = {
+        let mut table = write_txn.open_table(CACHE_RECORDS).map_err(|e| e.to_string())?;
+        let comp_key = make_composite_key(cache_name, url);
+        let res = table.remove(comp_key.as_str()).map_err(|e| e.to_string())?.is_some();
+        res
+    };
+    write_txn.commit().map_err(|e| e.to_string())?;
+    Ok(removed)
+}
+
+pub fn cache_keys(db_path: &Path, cache_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(db) = Database::open(db_path) else { return out; };
+    let Ok(read_txn) = db.begin_read() else { return out; };
+    let Ok(table) = read_txn.open_table(CACHE_RECORDS) else { return out; };
+    let prefix = format!("{}\0", cache_name);
+    let end_prefix = format!("{}\x01", cache_name);
+
+    if let Ok(iter) = table.range(prefix.as_str()..end_prefix.as_str()) {
+        for item in iter.flatten() {
+            let raw_key = item.0.value();
+            if let Some(user_key) = raw_key.strip_prefix(&prefix) {
+                out.push(user_key.to_string());
+            }
+        }
+    }
+    out
+}

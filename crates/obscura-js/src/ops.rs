@@ -5458,6 +5458,80 @@ fn op_idb_count(
     crate::idb::idb_count(&path, store) as u32
 }
 
+#[op2]
+#[string]
+fn op_cache_get(
+    scope: &mut v8::PinScope,
+    state: &OpState,
+    #[string] cache_name: &str,
+    #[string] url: &str,
+) -> Option<String> {
+    let gs = realm_state(scope, state);
+    let gs = gs.borrow();
+    let storage_dir = gs.storage_dir.as_ref()?;
+    let origin = match url::Url::parse(&gs.url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => return None,
+    };
+    let path = crate::idb::get_cache_db_path(storage_dir, &origin);
+    crate::idb::cache_get(&path, cache_name, url)
+}
+
+#[op2(fast)]
+fn op_cache_put(
+    scope: &mut v8::PinScope,
+    state: &OpState,
+    #[string] cache_name: &str,
+    #[string] url: &str,
+    #[string] val_json: &str,
+) -> bool {
+    let gs = realm_state(scope, state);
+    let gs = gs.borrow();
+    let Some(storage_dir) = gs.storage_dir.as_ref() else { return false; };
+    let origin = match url::Url::parse(&gs.url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => return false,
+    };
+    let path = crate::idb::get_cache_db_path(storage_dir, &origin);
+    crate::idb::cache_put(&path, cache_name, url, val_json).is_ok()
+}
+
+#[op2(fast)]
+fn op_cache_delete(
+    scope: &mut v8::PinScope,
+    state: &OpState,
+    #[string] cache_name: &str,
+    #[string] url: &str,
+) -> bool {
+    let gs = realm_state(scope, state);
+    let gs = gs.borrow();
+    let Some(storage_dir) = gs.storage_dir.as_ref() else { return false; };
+    let origin = match url::Url::parse(&gs.url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => return false,
+    };
+    let path = crate::idb::get_cache_db_path(storage_dir, &origin);
+    crate::idb::cache_delete(&path, cache_name, url).unwrap_or(false)
+}
+
+#[op2]
+#[serde]
+fn op_cache_keys(
+    scope: &mut v8::PinScope,
+    state: &OpState,
+    #[string] cache_name: &str,
+) -> Vec<String> {
+    let gs = realm_state(scope, state);
+    let gs = gs.borrow();
+    let Some(storage_dir) = gs.storage_dir.as_ref() else { return Vec::new(); };
+    let origin = match url::Url::parse(&gs.url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => return Vec::new(),
+    };
+    let path = crate::idb::get_cache_db_path(storage_dir, &origin);
+    crate::idb::cache_keys(&path, cache_name)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SessionHistory {
     pub urls: Vec<String>,
@@ -6665,6 +6739,10 @@ pub fn build_extension() -> Extension {
         op_idb_get_all(),
         op_idb_get_all_keys(),
         op_idb_count(),
+        op_cache_get(),
+        op_cache_put(),
+        op_cache_delete(),
+        op_cache_keys(),
         op_navigate(),
         op_session_history(),
         op_history_traverse(),
