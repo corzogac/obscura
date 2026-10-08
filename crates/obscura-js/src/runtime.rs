@@ -1247,8 +1247,28 @@ impl ObscuraJsRuntime {
         }
     }
 
-    pub fn set_storage_dir(&self, storage_dir: Option<std::path::PathBuf>) {
+    pub fn set_storage_dir(&mut self, storage_dir: Option<std::path::PathBuf>) {
         self.state.borrow_mut().storage_dir = storage_dir;
+        self.rehydrate_persisted_storage();
+    }
+
+    /// The realm bootstrap builds `globalThis.localStorage` and reads the
+    /// persisted map from disk while the isolate is still being constructed —
+    /// before the caller has had a chance to set the document URL and the
+    /// storage directory. `op_localstorage_load` bails out when either is
+    /// unset, so that eager load always came back empty, and because saves read
+    /// the directory at call time the next `setItem` replaced the file with the
+    /// current session's map alone. Merge what is on disk into the live store as
+    /// soon as the directory is known; `set_storage_dir` is called after
+    /// `set_url`, so the origin is already correct.
+    fn rehydrate_persisted_storage(&mut self) {
+        if self.state.borrow().storage_dir.is_none() {
+            return;
+        }
+        let _ = self.execute_script(
+            "obscura-storage-rehydrate",
+            "if (typeof globalThis.__obscuraRehydrateStorage === 'function') { globalThis.__obscuraRehydrateStorage(); }",
+        );
     }
 
     /// Set the document's character encoding (WHATWG canonical name). Backs

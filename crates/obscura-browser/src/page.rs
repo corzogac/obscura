@@ -1766,19 +1766,6 @@ impl Page {
         );
         rt.set_url(&self.url_string());
         rt.set_storage_dir(self.context.storage_dir.clone());
-        // Persisted localStorage is read once, while the realm boots, and the
-        // realm boots inside the constructor above — before set_url and
-        // set_storage_dir run. The eager load therefore sees no storage
-        // directory and every session starts empty, while saves (which read
-        // the directory at call time) happily overwrite the file with that
-        // empty map. Re-hydrate now that both the URL and the directory are in
-        // place, which is still before any document script executes.
-        if self.context.storage_dir.is_some() {
-            let _ = rt.execute_script(
-                "obscura-storage-rehydrate",
-                "if (typeof globalThis.__obscuraRehydrateStorage === 'function') { globalThis.__obscuraRehydrateStorage(); }",
-            );
-        }
         rt.set_encoding(&self.encoding);
         rt.set_title(&self.title);
         rt.set_referrer(&self.referrer);
