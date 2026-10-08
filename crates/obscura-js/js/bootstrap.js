@@ -12210,6 +12210,33 @@ const _mkStore = (isLocal = false) => {
 globalThis.localStorage = _mkStore(true);
 globalThis.sessionStorage = _mkStore(false);
 
+// The realm bootstrap runs before the browser hands the runtime its document
+// URL and storage directory, so the `_mkStore(true)` above always loads an
+// empty map: `op_localstorage_load` bails out when storage_dir is still unset.
+// The browser calls this hook once both are set (and before any page script
+// runs) to merge what is on disk into the live store. Merging rather than
+// replacing keeps anything a page wrote during setup, and because the merged
+// keys now live in `_data`, the next setItem persists them again instead of
+// overwriting the file with a partial map.
+globalThis.__obscuraRehydrateStorage = function() {
+  try {
+    if (typeof __obscuraCore === 'undefined' || !__obscuraCore.ops ||
+        typeof __obscuraCore.ops.op_localstorage_load !== 'function') return 0;
+    const store = globalThis.localStorage;
+    if (!store || !store._data) return 0;
+    const raw = __obscuraCore.ops.op_localstorage_load();
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw);
+    let added = 0;
+    for (const k of Object.keys(parsed)) {
+      const key = String(k);
+      if (!Object.prototype.hasOwnProperty.call(store._data, key)) added++;
+      store._data[key] = String(parsed[k]);
+    }
+    return added;
+  } catch (_) { return 0; }
+};
+
 globalThis.btoa = globalThis.btoa || ((s) => { s = String(s); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) { const cp = s.charCodeAt(i); if (cp > 0xFF) throw new DOMException("The string to be encoded contains characters outside of the Latin1 range.", "InvalidCharacterError"); b[i] = cp; } const c="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; let r=""; for(let i=0;i<b.length;i+=3){const a=b[i],bb=b[i+1]??0,cc=b[i+2]??0; r+=c[a>>2]+c[((a&3)<<4)|(bb>>4)]+(i+1<b.length?c[((bb&15)<<2)|(cc>>6)]:"=")+(i+2<b.length?c[cc&63]:"=");} return r; });
 globalThis.atob = globalThis.atob || ((s) => {
   const c="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
